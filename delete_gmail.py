@@ -108,44 +108,89 @@ def search_emails(service, query):
         print(f'搜索邮件时发生错误: {error}')
         return []
 
-def delete_emails(service, message_ids):
-    """批量删除邮件"""
+def delete_emails(service, message_ids, batch_size=1000):
+    """批量删除邮件（使用 Gmail API 的批量删除功能）"""
     if not message_ids:
         print("没有找到要删除的邮件")
         return
     
+    total_count = len(message_ids)
+    print(f"\n找到 {total_count} 封邮件，开始批量删除...")
+    print(f"批量大小: {batch_size} 封/批")
+    
     deleted_count = 0
     failed_count = 0
+    failed_batches = []
     
-    print(f"\n找到 {len(message_ids)} 封邮件，开始删除...")
+    # 将邮件 ID 列表分批处理（Gmail API 批量删除最多支持 1000 封）
+    batches = []
+    for i in range(0, total_count, batch_size):
+        batch = [msg['id'] for msg in message_ids[i:i + batch_size]]
+        batches.append(batch)
     
-    for i, msg_id in enumerate(message_ids, 1):
+    total_batches = len(batches)
+    print(f"共 {total_batches} 批需要处理\n")
+    
+    for batch_num, batch_ids in enumerate(batches, 1):
         try:
-            service.users().messages().delete(userId='me', id=msg_id['id']).execute()
-            deleted_count += 1
-            if i % 10 == 0:
-                print(f"已删除 {i}/{len(message_ids)} 封邮件...")
+            # 使用批量删除 API
+            service.users().messages().batchDelete(
+                userId='me',
+                body={'ids': batch_ids}
+            ).execute()
+            
+            deleted_count += len(batch_ids)
+            progress = (batch_num / total_batches) * 100
+            print(f"进度: [{batch_num}/{total_batches}] ({progress:.1f}%) - 已删除 {deleted_count}/{total_count} 封邮件")
+            
         except HttpError as error:
-            failed_count += 1
-            if 'insufficientPermissions' in str(error) or 'insufficient authentication scopes' in str(error):
+            error_str = str(error)
+            if 'insufficientPermissions' in error_str or 'insufficient authentication scopes' in error_str:
                 print("\n错误: 权限不足！")
                 print("需要删除旧的 token 并重新授权。")
                 print("请删除 token.pickle 文件后重新运行脚本。")
                 if os.path.exists('token.pickle'):
                     print("正在删除旧的 token.pickle...")
                     os.remove('token.pickle')
-                break
-            print(f"删除邮件 {msg_id['id']} 时发生错误: {error}")
+                return
+            
+            # 如果批量删除失败，尝试逐个删除这一批
+            print(f"\n警告: 第 {batch_num} 批批量删除失败，尝试逐个删除...")
+            failed_batch_count = 0
+            for msg_id in batch_ids:
+                try:
+                    service.users().messages().delete(userId='me', id=msg_id).execute()
+                    deleted_count += 1
+                    failed_batch_count += 1
+                except HttpError as e:
+                    failed_count += 1
+                    if 'insufficientPermissions' in str(e) or 'insufficient authentication scopes' in str(e):
+                        print("\n错误: 权限不足！")
+                        if os.path.exists('token.pickle'):
+                            os.remove('token.pickle')
+                        return
+                    print(f"  删除邮件 {msg_id} 失败: {e}")
+            
+            if failed_batch_count > 0:
+                print(f"  第 {batch_num} 批中成功删除 {failed_batch_count}/{len(batch_ids)} 封")
+            else:
+                failed_batches.append(batch_num)
     
-    print("\n删除完成！")
+    print("\n" + "=" * 60)
+    print("删除完成！")
+    print("=" * 60)
     print(f"成功删除: {deleted_count} 封")
     if failed_count > 0:
         print(f"删除失败: {failed_count} 封")
+    if failed_batches:
+        print(f"失败的批次: {failed_batches}")
 
 def main():
     """主函数"""
     print("=" * 60)
-    print("Gmail 邮件删除工具")
+    print("Gmail 邮件删除工具 (批量删除模式)")
+    print("=" * 60)
+    print("使用 Gmail API 批量删除功能，每批最多删除 1000 封邮件")
     print("=" * 60)
     
     # 获取 Gmail 服务
@@ -153,9 +198,12 @@ def main():
     if not service:
         return
     
-    # 搜索主题包含 "ruanyf/weekly" 的邮件
-    query = 'subject:"ruanyf/weekly"'
-    print("\n正在搜索主题包含 'ruanyf/weekly' 的邮件...")
+    # 搜索主题包含 "ruanyf/weekly" Unity Ads/ gave you kudos的邮件
+    keywords = 'New ios questions'
+    keywords = 'ruanyf/weekly'
+    query = f'subject:"{keywords}"'
+
+    print(f"\n正在搜索主题包含 '{keywords}' 的邮件...")
     
     messages = search_emails(service, query)
     
@@ -165,14 +213,19 @@ def main():
     
     print(f"找到 {len(messages)} 封匹配的邮件")
     
-    # 确认删除
-    response = input(f"\n确定要删除这 {len(messages)} 封邮件吗? (yes/no): ")
-    if response.lower() not in ['yes', 'y', '是']:
-        print("操作已取消")
-        return
+    # 计算预计批次数
+    batch_size = 1000
+    estimated_batches = (len(messages) + batch_size - 1) // batch_size
+    print(f"预计将分 {estimated_batches} 批进行删除（每批 {batch_size} 封）")
     
-    # 删除邮件
-    delete_emails(service, messages)
+    # 确认删除
+    # response = input(f"\n确定要删除这 {len(messages)} 封邮件吗? (yes/no): ")
+    # if response.lower() not in ['yes', 'y', '是']:
+    #     print("操作已取消")
+    #     return
+    
+    # 批量删除邮件
+    delete_emails(service, messages, batch_size=batch_size)
     
     print("\n操作完成！")
 

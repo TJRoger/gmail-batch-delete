@@ -1,0 +1,40 @@
+{% extends "base.html" %}
+
+{% block title %}登录 - Gmail 邮件批量删除工具{% endblock %}
+
+{% block content %}
+<div class="login-container">
+    <div class="login-box">
+        <h2>Gmail 授权登录</h2>
+        <p>请先授权应用访问你的 Gmail 邮箱</p>
+
+        <form id="login-form">
+            <div class="form-group">
+                <label for="user-id">用户ID（可选，用于多用户管理）:</label>
+                <input type="text" id="user-id" name="user_id" value="default" placeholder="输入用户ID">
+                <small>留空或使用 "default" 作为默认用户</small>
+            </div>
+
+            <button type="submit" class="btn btn-primary">开始授权</button>
+        </form>
+
+        <div class="info-box">
+            <h3>使用说明：</h3>
+            <ul>
+                <li>点击"开始授权"后会跳转到 Google 授权页面</li>
+                <li>请授予应用访问 Gmail 的权限</li>
+                <li>授权完成后会自动返回应用</li>
+                <li>Token 会按用户ID保存在不同目录中</li>
+            </ul>
+        </div>
+    </div>
+</div>
+
+<script>
+    document.getElementById('login-form').addEventListener('submit', function (e) {
+        e.preventDefault();
+        const userId = document.getElementById('user-id').value || 'default';
+        window.location.href = `/auth?user_id=${encodeURIComponent(userId)}`;
+    });
+</script>
+{% endblock %}
