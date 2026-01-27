@@ -88,13 +88,13 @@ python3 app.py
 
 ### 4. 访问 Web 界面
 
-打开浏览器访问：http://localhost:5000
+打开浏览器访问：http://localhost:5004
 
 ## 使用说明
 
 ### 首次使用
 
-1. 访问 http://localhost:5000
+1. 访问 http://localhost:5004
 2. 点击"登录"或直接访问登录页面
 3. 输入用户ID（可选，默认为 "default"）
 4. 点击"开始授权"
@@ -213,7 +213,7 @@ python3 app.py
 - 批量删除每批最多 1000 封邮件（Gmail API 限制）
 - Token 文件存储在 `users/{user_id}/token.pickle`
 - 如果遇到权限问题，删除对应的 token.pickle 文件后重新授权
-- Web 服务默认运行在 `http://localhost:5000`
+- Web 服务默认运行在 `http://localhost:5004`
 - 生产环境建议使用 HTTPS 和更安全的 session 密钥
 
 ## 命令行版本
@@ -246,7 +246,7 @@ python3 delete_gmail.py
 修改 `app.py` 文件末尾的端口号：
 
 ```python
-app.run(debug=True, host='0.0.0.0', port=5001)  # 改为其他端口
+app.run(debug=True, host='0.0.0.0', port=5004)  # 改为其他端口
 ```
 
 ## 开发调试
