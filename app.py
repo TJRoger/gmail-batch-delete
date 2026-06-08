@@ -8,6 +8,8 @@ from flask import Flask, render_template, request, jsonify, session, redirect, u
 import os
 import pickle
 import glob
+import socket
+import urllib.request
 from google.auth.transport.requests import Request
 from google_auth_oauthlib.flow import Flow
 from googleapiclient.discovery import build
@@ -16,6 +18,72 @@ import secrets
 
 # 允许在开发环境中使用 HTTP（仅用于本地开发）
 os.environ['OAUTHLIB_INSECURE_TRANSPORT'] = '1'
+
+# 本地代理（v2ray SOCKS5 入站）
+PROXY_HOST = '127.0.0.1'
+PROXY_PORT = 1080
+# 用于探测 Google API 是否可达的 URL；超时控制在 3s
+NETWORK_PROBE_URL = 'https://www.googleapis.com/generate_204'
+NETWORK_PROBE_TIMEOUT = 3
+
+
+def _can_reach(url, timeout):
+    """网络探测：能拿到任意 HTTP 响应即视为通"""
+    try:
+        with urllib.request.urlopen(url, timeout=timeout):
+            return True
+    except Exception:
+        return False
+
+
+def _proxy_listening(host, port):
+    """检查本地代理端口是否在监听"""
+    try:
+        with socket.create_connection((host, port), timeout=1):
+            return True
+    except OSError:
+        return False
+
+
+def _enable_socks5_proxy(host, port):
+    """把全局 socket 切到 SOCKS5 代理；同时设置 *_PROXY 环境变量"""
+    try:
+        import socks  # PySocks
+    except ImportError:
+        print('[network] 未安装 PySocks，无法启用 SOCKS5 代理；请 pip install pysocks')
+        return False
+
+    # 让 httplib2 / google-api-python-client 走代理
+    socks.set_default_proxy(socks.SOCKS5, host, port)
+    socket.socket = socks.socksocket
+
+    # 让 requests / urllib 等走代理（DNS 也通过代理解析）
+    proxy_url = f'socks5h://{host}:{port}'
+    os.environ['HTTP_PROXY'] = proxy_url
+    os.environ['HTTPS_PROXY'] = proxy_url
+    os.environ['ALL_PROXY'] = proxy_url
+    return True
+
+
+def ensure_network_or_use_proxy():
+    """启动时检测外网；不通则回退到本地 v2ray SOCKS5 代理"""
+    if _can_reach(NETWORK_PROBE_URL, NETWORK_PROBE_TIMEOUT):
+        print('[network] 外网直连可用')
+        return
+
+    print(f'[network] 直连不通，尝试本地代理 {PROXY_HOST}:{PROXY_PORT}')
+    if not _proxy_listening(PROXY_HOST, PROXY_PORT):
+        print(f'[network] 本地代理 {PROXY_HOST}:{PROXY_PORT} 未监听，启动继续但 Google API 调用可能失败')
+        return
+
+    if not _enable_socks5_proxy(PROXY_HOST, PROXY_PORT):
+        return
+
+    if _can_reach(NETWORK_PROBE_URL, NETWORK_PROBE_TIMEOUT):
+        print(f'[network] 已切换到 SOCKS5 代理 {PROXY_HOST}:{PROXY_PORT}')
+    else:
+        print(f'[network] 切到代理后仍不通，请检查 v2ray 配置')
+
 
 app = Flask(__name__)
 app.secret_key = secrets.token_hex(16)  # 用于session加密
@@ -106,32 +174,56 @@ def get_gmail_service(user_id):
         return None
 
 
+def _wrap_operator_value(value):
+    """
+    将用户输入的操作符值（如 subject、from 的内容）格式化为 Gmail 查询片段。
+
+    不对单值加双引号，因为 Gmail 的短语精确匹配在中文 + 特殊字符
+    (@、全角标点等) 场景下经常匹配失败。改用 token 包含匹配；
+    若包含空格，则用括号包裹以保留多词 AND 语义。
+    """
+    value = value.strip()
+    if not value:
+        return None
+    if any(ch.isspace() for ch in value):
+        return f'({value})'
+    return value
+
+
 def build_query(filters):
     """构建Gmail搜索查询"""
     query_parts = []
-    
+
     # 主题过滤
     if filters.get('subject'):
-        query_parts.append(f'subject:"{filters["subject"]}"')
-    
+        wrapped = _wrap_operator_value(filters['subject'])
+        if wrapped:
+            query_parts.append(f'subject:{wrapped}')
+
     # 发件人过滤
     if filters.get('from'):
-        query_parts.append(f'from:"{filters["from"]}"')
-    
+        wrapped = _wrap_operator_value(filters['from'])
+        if wrapped:
+            query_parts.append(f'from:{wrapped}')
+
     # 收件人过滤
     if filters.get('to'):
-        query_parts.append(f'to:"{filters["to"]}"')
-    
+        wrapped = _wrap_operator_value(filters['to'])
+        if wrapped:
+            query_parts.append(f'to:{wrapped}')
+
     # 日期过滤
     if filters.get('after_date'):
         query_parts.append(f'after:{filters["after_date"]}')
-    
+
     if filters.get('before_date'):
         query_parts.append(f'before:{filters["before_date"]}')
-    
+
     # 标签过滤
     if filters.get('label'):
-        query_parts.append(f'label:"{filters["label"]}"')
+        wrapped = _wrap_operator_value(filters['label'])
+        if wrapped:
+            query_parts.append(f'label:{wrapped}')
     
     # 包含附件
     if filters.get('has_attachment'):
@@ -151,7 +243,13 @@ def build_query(filters):
     # 关键词搜索（全文搜索）
     if filters.get('keyword'):
         query_parts.append(f'"{filters["keyword"]}"')
-    
+
+    # 搜索范围：默认搜索所有位置（包括垃圾邮件和已删除邮件）
+    if filters.get('search_scope') == 'default':
+        pass  # 不加 in:anywhere，使用 Gmail 默认行为（排除 Spam/Trash）
+    else:
+        query_parts.append('in:anywhere')
+
     return ' '.join(query_parts) if query_parts else None
 
 
@@ -457,6 +555,9 @@ def api_user_info():
 
 
 if __name__ == '__main__':
+    # 启动前检查网络；不通则尝试切到本地 v2ray SOCKS5 代理
+    ensure_network_or_use_proxy()
+
     # 初始化时查找凭据文件
     CONFIG['CLIENT_SECRETS_FILE'] = find_credentials_file()
     app.run(debug=True, host='0.0.0.0', port=5004)

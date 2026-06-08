@@ -200,7 +200,7 @@ def main():
     
     # 搜索主题包含 "ruanyf/weekly" Unity Ads/ gave you kudos的邮件
     keywords = 'New ios questions'
-    keywords = 'ruanyf/weekly'
+    keywords = '猎头'
     query = f'subject:"{keywords}"'
 
     print(f"\n正在搜索主题包含 '{keywords}' 的邮件...")

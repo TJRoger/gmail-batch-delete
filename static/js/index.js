@@ -20,6 +20,7 @@ document.getElementById('search-form').addEventListener('submit', async function
     if (document.getElementById('has-attachment').checked) filters.has_attachment = true;
     if (document.getElementById('is-read').checked) filters.is_read = true;
     if (document.getElementById('is-starred').checked) filters.is_starred = true;
+    filters.search_scope = document.getElementById('search-scope').value;
 
     try {
         const response = await fetch('/api/search', {
@@ -135,6 +136,7 @@ document.getElementById('delete-btn').addEventListener('click', async function (
         if (document.getElementById('has-attachment').checked) filters.has_attachment = true;
         if (document.getElementById('is-read').checked) filters.is_read = true;
         if (document.getElementById('is-starred').checked) filters.is_starred = true;
+        filters.search_scope = document.getElementById('search-scope').value;
 
         progressText.textContent = '正在删除邮件...';
 
